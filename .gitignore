@@ -1,0 +1,15 @@
+# Rust build artifacts
+/target/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Logs / temp
+*.log
+*--temp.*
+
