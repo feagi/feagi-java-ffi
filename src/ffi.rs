@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_uchar, CStr, CString};
 use std::ptr;
 
-use feagi_agent::core::{AgentClient, AgentConfig, AgentType};
+use feagi_agent::core::{AgentClient, AgentConfig, AgentType, RegistrationResponse};
 use feagi_serialization::FeagiByteContainer;
 
 /// ABI version for `feagi-java-ffi`.
@@ -653,6 +653,211 @@ pub extern "C" fn feagi_client_connect(client: *mut FeagiAgentClientHandle) -> F
         Err(e) => {
             set_last_error(e.to_string());
             FeagiStatus::SdkError
+        }
+    }
+}
+
+/// Allocate the last successful FEAGI registration response body as JSON.
+///
+/// This is only available after `feagi_client_connect(...)` succeeds.
+///
+/// The returned pointer must be freed with `feagi_string_free`.
+#[no_mangle]
+pub extern "C" fn feagi_client_registration_response_json_alloc(
+    client: *const FeagiAgentClientHandle,
+) -> *mut c_char {
+    clear_last_error();
+    if client.is_null() {
+        set_last_error("client must not be null");
+        return ptr::null_mut();
+    }
+    let body_opt = unsafe { (*client).client.registration_body_json() };
+    let Some(body) = body_opt else {
+        set_last_error(
+            "Registration response not available (call feagi_client_connect() successfully first)",
+        );
+        return ptr::null_mut();
+    };
+    let json = match serde_json::to_string(body) {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(format!("Failed to serialize registration response: {e}"));
+            return ptr::null_mut();
+        }
+    };
+    match CString::new(json) {
+        Ok(s) => s.into_raw(),
+        Err(e) => {
+            set_last_error(format!("Failed to allocate registration response string: {e}"));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Allocate the ZMQ port map from the last successful registration response as JSON.
+///
+/// Returns a JSON object like: `{"sensory":5558,"motor":5564,...}`.
+/// The returned pointer must be freed with `feagi_string_free`.
+#[no_mangle]
+pub extern "C" fn feagi_client_registration_zmq_ports_json_alloc(
+    client: *const FeagiAgentClientHandle,
+) -> *mut c_char {
+    clear_last_error();
+    if client.is_null() {
+        set_last_error("client must not be null");
+        return ptr::null_mut();
+    }
+
+    let body_opt = unsafe { (*client).client.registration_body_json() };
+    let Some(body) = body_opt else {
+        set_last_error(
+            "Registration response not available (call feagi_client_connect() successfully first)",
+        );
+        return ptr::null_mut();
+    };
+
+    let parsed = match RegistrationResponse::from_json(body) {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(format!("Failed to parse registration response: {e}"));
+            return ptr::null_mut();
+        }
+    };
+
+    let ports = match parsed.zmq_ports {
+        Some(p) => p,
+        None => {
+            set_last_error("Registration response did not include zmq_ports");
+            return ptr::null_mut();
+        }
+    };
+
+    let json = match serde_json::to_string(&ports) {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(format!("Failed to serialize zmq_ports: {e}"));
+            return ptr::null_mut();
+        }
+    };
+
+    match CString::new(json) {
+        Ok(s) => s.into_raw(),
+        Err(e) => {
+            set_last_error(format!("Failed to allocate zmq_ports string: {e}"));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Allocate the transport configuration chosen from the last successful registration response as JSON.
+///
+/// - If `preference` is non-null/non-empty, it is attempted first.
+/// - Otherwise, FEAGI's `recommended_transport` is used.
+///
+/// The returned pointer must be freed with `feagi_string_free`.
+#[no_mangle]
+pub extern "C" fn feagi_client_registration_chosen_transport_json_alloc(
+    client: *const FeagiAgentClientHandle,
+    preference: *const c_char,
+) -> *mut c_char {
+    clear_last_error();
+    if client.is_null() {
+        set_last_error("client must not be null");
+        return ptr::null_mut();
+    }
+
+    let body_opt = unsafe { (*client).client.registration_body_json() };
+    let Some(body) = body_opt else {
+        set_last_error(
+            "Registration response not available (call feagi_client_connect() successfully first)",
+        );
+        return ptr::null_mut();
+    };
+
+    let parsed = match RegistrationResponse::from_json(body) {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(format!("Failed to parse registration response: {e}"));
+            return ptr::null_mut();
+        }
+    };
+
+    let pref = if preference.is_null() {
+        None
+    } else {
+        match cstr_to_string(preference, "preference") {
+            Ok(s) if !s.is_empty() => Some(s),
+            Ok(_) => None,
+            Err(_) => return ptr::null_mut(),
+        }
+    };
+
+    let chosen = parsed.choose_transport(pref.as_deref());
+    let Some(chosen) = chosen else {
+        set_last_error("No enabled transports available in registration response");
+        return ptr::null_mut();
+    };
+
+    let json = match serde_json::to_string(chosen) {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(format!("Failed to serialize chosen transport: {e}"));
+            return ptr::null_mut();
+        }
+    };
+
+    match CString::new(json) {
+        Ok(s) => s.into_raw(),
+        Err(e) => {
+            set_last_error(format!(
+                "Failed to allocate chosen transport string: {e}"
+            ));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Allocate FEAGI's `recommended_transport` string (if provided).
+///
+/// The returned pointer must be freed with `feagi_string_free`.
+#[no_mangle]
+pub extern "C" fn feagi_client_registration_recommended_transport_alloc(
+    client: *const FeagiAgentClientHandle,
+) -> *mut c_char {
+    clear_last_error();
+    if client.is_null() {
+        set_last_error("client must not be null");
+        return ptr::null_mut();
+    }
+
+    let body_opt = unsafe { (*client).client.registration_body_json() };
+    let Some(body) = body_opt else {
+        set_last_error(
+            "Registration response not available (call feagi_client_connect() successfully first)",
+        );
+        return ptr::null_mut();
+    };
+
+    let parsed = match RegistrationResponse::from_json(body) {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(format!("Failed to parse registration response: {e}"));
+            return ptr::null_mut();
+        }
+    };
+
+    let Some(recommended) = parsed.recommended_transport else {
+        set_last_error("Registration response did not include recommended_transport");
+        return ptr::null_mut();
+    };
+
+    match CString::new(recommended) {
+        Ok(s) => s.into_raw(),
+        Err(e) => {
+            set_last_error(format!(
+                "Failed to allocate recommended_transport string: {e}"
+            ));
+            ptr::null_mut()
         }
     }
 }

@@ -42,6 +42,12 @@ uint32_t feagi_abi_version(void);
 char* feagi_library_version_alloc(void);
 void feagi_string_free(char* s);
 
+// Registration response (JSON)
+char* feagi_client_registration_response_json_alloc(const FeagiAgentClientHandle* client);
+char* feagi_client_registration_zmq_ports_json_alloc(const FeagiAgentClientHandle* client);
+char* feagi_client_registration_chosen_transport_json_alloc(const FeagiAgentClientHandle* client, const char* preference_or_null);
+char* feagi_client_registration_recommended_transport_alloc(const FeagiAgentClientHandle* client);
+
 // Byte buffer helpers
 const uint8_t* feagi_buffer_ptr(const FeagiByteBufferHandle* buf);
 size_t feagi_buffer_len(const FeagiByteBufferHandle* buf);
