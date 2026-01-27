@@ -18,7 +18,7 @@ This folder hosts the **Rust-backed native library** that the future FEAGI Java 
 ### What exists today (minimal usable surface)
 - **Config + client lifecycle**: create config, set explicit endpoints/timeouts/capabilities, create client, connect, send/receive.
 - **Error reporting**: per-thread last error message via `feagi_last_error_message_alloc()` + `feagi_string_free()`.
-- **Registration response helpers** (JSON): functions to retrieve the last successful registration body and derived `zmq_ports` / chosen transport.
+- **Registration response helpers** (JSON): functions to retrieve the last successful registration body, derived ZMQ ports from transport config, and chosen transport.
 - **Motor payload return**: motor data is returned as an opaque byte buffer handle (`FeagiByteBufferHandle`) to keep ownership correct across FFI.
 
 ### Build (local)

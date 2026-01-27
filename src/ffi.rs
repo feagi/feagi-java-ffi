@@ -724,18 +724,20 @@ pub extern "C" fn feagi_client_registration_zmq_ports_json_alloc(
         }
     };
 
-    let ports = match parsed.zmq_ports {
-        Some(p) => p,
+    let transport = match parsed.get_transport("zmq") {
+        Some(t) => t,
         None => {
-            set_last_error("Registration response did not include zmq_ports");
+            set_last_error("Registration response did not include an enabled ZMQ transport");
             return ptr::null_mut();
         }
     };
 
+    let ports = transport.ports.clone();
+
     let json = match serde_json::to_string(&ports) {
         Ok(s) => s,
         Err(e) => {
-            set_last_error(format!("Failed to serialize zmq_ports: {e}"));
+            set_last_error(format!("Failed to serialize ZMQ ports: {e}"));
             return ptr::null_mut();
         }
     };
