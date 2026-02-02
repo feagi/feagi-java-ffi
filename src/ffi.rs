@@ -60,6 +60,76 @@ impl From<FeagiAgentType> for AgentType {
     }
 }
 
+/// Sensory unit mapping for the C ABI.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum FeagiSensoryUnit {
+    Infrared = 0,
+    Proximity = 1,
+    Shock = 2,
+    Battery = 3,
+    Servo = 4,
+    AnalogGpio = 5,
+    DigitalGpio = 6,
+    MiscData = 7,
+    TextEnglishInput = 8,
+    CountInput = 9,
+    Vision = 10,
+    SegmentedVision = 11,
+    Accelerometer = 12,
+    Gyroscope = 13,
+}
+
+impl From<FeagiSensoryUnit> for feagi_io::SensoryUnit {
+    fn from(value: FeagiSensoryUnit) -> Self {
+        match value {
+            FeagiSensoryUnit::Infrared => feagi_io::SensoryUnit::Infrared,
+            FeagiSensoryUnit::Proximity => feagi_io::SensoryUnit::Proximity,
+            FeagiSensoryUnit::Shock => feagi_io::SensoryUnit::Shock,
+            FeagiSensoryUnit::Battery => feagi_io::SensoryUnit::Battery,
+            FeagiSensoryUnit::Servo => feagi_io::SensoryUnit::Servo,
+            FeagiSensoryUnit::AnalogGpio => feagi_io::SensoryUnit::AnalogGpio,
+            FeagiSensoryUnit::DigitalGpio => feagi_io::SensoryUnit::DigitalGpio,
+            FeagiSensoryUnit::MiscData => feagi_io::SensoryUnit::MiscData,
+            FeagiSensoryUnit::TextEnglishInput => feagi_io::SensoryUnit::TextEnglishInput,
+            FeagiSensoryUnit::CountInput => feagi_io::SensoryUnit::CountInput,
+            FeagiSensoryUnit::Vision => feagi_io::SensoryUnit::Vision,
+            FeagiSensoryUnit::SegmentedVision => feagi_io::SensoryUnit::SegmentedVision,
+            FeagiSensoryUnit::Accelerometer => feagi_io::SensoryUnit::Accelerometer,
+            FeagiSensoryUnit::Gyroscope => feagi_io::SensoryUnit::Gyroscope,
+        }
+    }
+}
+
+/// Motor unit mapping for the C ABI.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum FeagiMotorUnit {
+    RotaryMotor = 0,
+    PositionalServo = 1,
+    Gaze = 2,
+    MiscData = 3,
+    TextEnglishOutput = 4,
+    CountOutput = 5,
+    ObjectSegmentation = 6,
+    SimpleVisionOutput = 7,
+}
+
+impl From<FeagiMotorUnit> for feagi_io::MotorUnit {
+    fn from(value: FeagiMotorUnit) -> Self {
+        match value {
+            FeagiMotorUnit::RotaryMotor => feagi_io::MotorUnit::RotaryMotor,
+            FeagiMotorUnit::PositionalServo => feagi_io::MotorUnit::PositionalServo,
+            FeagiMotorUnit::Gaze => feagi_io::MotorUnit::Gaze,
+            FeagiMotorUnit::MiscData => feagi_io::MotorUnit::MiscData,
+            FeagiMotorUnit::TextEnglishOutput => feagi_io::MotorUnit::TextEnglishOutput,
+            FeagiMotorUnit::CountOutput => feagi_io::MotorUnit::CountOutput,
+            FeagiMotorUnit::ObjectSegmentation => feagi_io::MotorUnit::ObjectSegmentation,
+            FeagiMotorUnit::SimpleVisionOutput => feagi_io::MotorUnit::SimpleVisionOutput,
+        }
+    }
+}
+
 /// Opaque config handle (caller owns it).
 pub struct FeagiAgentConfigHandle {
     config: AgentConfig,
@@ -282,6 +352,47 @@ pub extern "C" fn feagi_config_set_motor_endpoint(
     FeagiStatus::Ok
 }
 
+#[no_mangle]
+pub extern "C" fn feagi_config_set_visualization_endpoint(
+    cfg: *mut FeagiAgentConfigHandle,
+    endpoint: *const c_char,
+) -> FeagiStatus {
+    clear_last_error();
+    if cfg.is_null() {
+        set_last_error("cfg must not be null");
+        return FeagiStatus::NullPointer;
+    }
+    let Ok(endpoint) = cstr_to_string(endpoint, "visualization_endpoint") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    unsafe {
+        (*cfg).config = (*cfg)
+            .config
+            .clone()
+            .with_visualization_endpoint(endpoint);
+    }
+    FeagiStatus::Ok
+}
+
+#[no_mangle]
+pub extern "C" fn feagi_config_set_control_endpoint(
+    cfg: *mut FeagiAgentConfigHandle,
+    endpoint: *const c_char,
+) -> FeagiStatus {
+    clear_last_error();
+    if cfg.is_null() {
+        set_last_error("cfg must not be null");
+        return FeagiStatus::NullPointer;
+    }
+    let Ok(endpoint) = cstr_to_string(endpoint, "control_endpoint") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    unsafe {
+        (*cfg).config = (*cfg).config.clone().with_control_endpoint(endpoint);
+    }
+    FeagiStatus::Ok
+}
+
 /// Convenience helper to set all FEAGI endpoints from a host + explicit ports.
 ///
 /// This has **no default ports**: every port must be provided explicitly.
@@ -396,6 +507,26 @@ pub extern "C" fn feagi_config_set_registration_retries(
 }
 
 #[no_mangle]
+pub extern "C" fn feagi_config_set_retry_backoff_ms(
+    cfg: *mut FeagiAgentConfigHandle,
+    retry_backoff_ms: u64,
+) -> FeagiStatus {
+    clear_last_error();
+    if cfg.is_null() {
+        set_last_error("cfg must not be null");
+        return FeagiStatus::NullPointer;
+    }
+    if retry_backoff_ms == 0 {
+        set_last_error("retry_backoff_ms must be > 0");
+        return FeagiStatus::InvalidArgument;
+    }
+    unsafe {
+        (*cfg).config = (*cfg).config.clone().with_retry_backoff_ms(retry_backoff_ms);
+    }
+    FeagiStatus::Ok
+}
+
+#[no_mangle]
 pub extern "C" fn feagi_config_set_sensory_socket_config(
     cfg: *mut FeagiAgentConfigHandle,
     send_hwm: i32,
@@ -487,6 +618,38 @@ pub extern "C" fn feagi_config_set_vision_capability(
     FeagiStatus::Ok
 }
 
+/// Add a vision capability using semantic unit + group (Option B contract).
+#[no_mangle]
+pub extern "C" fn feagi_config_set_vision_unit(
+    cfg: *mut FeagiAgentConfigHandle,
+    modality: *const c_char,
+    width: usize,
+    height: usize,
+    channels: usize,
+    unit: FeagiSensoryUnit,
+    group: u8,
+) -> FeagiStatus {
+    clear_last_error();
+    if cfg.is_null() {
+        set_last_error("cfg must not be null");
+        return FeagiStatus::NullPointer;
+    }
+    if width == 0 || height == 0 || channels == 0 {
+        set_last_error("width/height/channels must be > 0");
+        return FeagiStatus::InvalidArgument;
+    }
+    let Ok(modality) = cstr_to_string(modality, "modality") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    unsafe {
+        (*cfg).config = (*cfg)
+            .config
+            .clone()
+            .with_vision_unit(modality, (width, height), channels, unit.into(), group);
+    }
+    FeagiStatus::Ok
+}
+
 /// Add a motor capability.
 #[no_mangle]
 pub extern "C" fn feagi_config_set_motor_capability(
@@ -542,6 +705,172 @@ pub extern "C" fn feagi_config_set_motor_capability(
             .with_motor_capability(modality, output_count, cortical_areas);
     }
     FeagiStatus::Ok
+}
+
+/// Add a motor capability using semantic unit + group (Option B contract).
+#[no_mangle]
+pub extern "C" fn feagi_config_set_motor_unit(
+    cfg: *mut FeagiAgentConfigHandle,
+    modality: *const c_char,
+    output_count: usize,
+    unit: FeagiMotorUnit,
+    group: u8,
+) -> FeagiStatus {
+    clear_last_error();
+    if cfg.is_null() {
+        set_last_error("cfg must not be null");
+        return FeagiStatus::NullPointer;
+    }
+    if output_count == 0 {
+        set_last_error("output_count must be > 0");
+        return FeagiStatus::InvalidArgument;
+    }
+    let Ok(modality) = cstr_to_string(modality, "modality") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    unsafe {
+        (*cfg).config = (*cfg)
+            .config
+            .clone()
+            .with_motor_unit(modality, output_count, unit.into(), group);
+    }
+    FeagiStatus::Ok
+}
+
+/// Add multiple motor unit sources from JSON.
+///
+/// Expects a JSON array of objects: `[{"unit":"rotary_motor","group":0}, ...]`.
+#[no_mangle]
+pub extern "C" fn feagi_config_set_motor_units_json(
+    cfg: *mut FeagiAgentConfigHandle,
+    modality: *const c_char,
+    output_count: usize,
+    motor_units_json: *const c_char,
+) -> FeagiStatus {
+    clear_last_error();
+    if cfg.is_null() {
+        set_last_error("cfg must not be null");
+        return FeagiStatus::NullPointer;
+    }
+    if output_count == 0 {
+        set_last_error("output_count must be > 0");
+        return FeagiStatus::InvalidArgument;
+    }
+    let Ok(modality) = cstr_to_string(modality, "modality") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    let Ok(json_str) = cstr_to_string(motor_units_json, "motor_units_json") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    let units: Vec<feagi_io::MotorUnitSpec> = match serde_json::from_str(&json_str) {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(format!("motor_units_json parse failed: {e}"));
+            return FeagiStatus::JsonError;
+        }
+    };
+    if units.is_empty() {
+        set_last_error("motor_units_json must include at least one unit");
+        return FeagiStatus::InvalidArgument;
+    }
+    unsafe {
+        (*cfg).config = (*cfg)
+            .config
+            .clone()
+            .with_motor_units(modality, output_count, units);
+    }
+    FeagiStatus::Ok
+}
+
+/// Add a visualization capability.
+#[no_mangle]
+pub extern "C" fn feagi_config_set_visualization_capability(
+    cfg: *mut FeagiAgentConfigHandle,
+    visualization_type: *const c_char,
+    has_resolution: bool,
+    resolution_width: usize,
+    resolution_height: usize,
+    has_refresh_rate: bool,
+    refresh_rate_hz: f64,
+    bridge_proxy: bool,
+) -> FeagiStatus {
+    clear_last_error();
+    if cfg.is_null() {
+        set_last_error("cfg must not be null");
+        return FeagiStatus::NullPointer;
+    }
+    let Ok(visualization_type) = cstr_to_string(visualization_type, "visualization_type") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    let resolution = if has_resolution {
+        if resolution_width == 0 || resolution_height == 0 {
+            set_last_error("resolution_width/height must be > 0 when has_resolution is true");
+            return FeagiStatus::InvalidArgument;
+        }
+        Some((resolution_width, resolution_height))
+    } else {
+        None
+    };
+    let refresh_rate = if has_refresh_rate {
+        if refresh_rate_hz <= 0.0 {
+            set_last_error("refresh_rate_hz must be > 0 when has_refresh_rate is true");
+            return FeagiStatus::InvalidArgument;
+        }
+        Some(refresh_rate_hz)
+    } else {
+        None
+    };
+    unsafe {
+        (*cfg).config = (*cfg).config.clone().with_visualization_capability(
+            visualization_type,
+            resolution,
+            refresh_rate,
+            bridge_proxy,
+        );
+    }
+    FeagiStatus::Ok
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    #[test]
+    fn test_visualization_config_roundtrip() {
+        let agent_id = CString::new("viz_agent").unwrap();
+        let registration = CString::new("tcp://feagi.invalid:30001").unwrap();
+        let visualization = CString::new("tcp://feagi.invalid:5562").unwrap();
+        let viz_type = CString::new("3d_brain").unwrap();
+
+        let cfg = feagi_config_new(agent_id.as_ptr(), FeagiAgentType::Visualization);
+        assert!(!cfg.is_null());
+
+        assert_eq!(
+            feagi_config_set_registration_endpoint(cfg, registration.as_ptr()),
+            FeagiStatus::Ok
+        );
+        assert_eq!(
+            feagi_config_set_visualization_endpoint(cfg, visualization.as_ptr()),
+            FeagiStatus::Ok
+        );
+        assert_eq!(
+            feagi_config_set_visualization_capability(
+                cfg,
+                viz_type.as_ptr(),
+                false,
+                0,
+                0,
+                false,
+                0.0,
+                false
+            ),
+            FeagiStatus::Ok
+        );
+        assert_eq!(feagi_config_validate(cfg), FeagiStatus::Ok);
+
+        feagi_config_free(cfg);
+    }
 }
 
 /// Add a custom capability from JSON.

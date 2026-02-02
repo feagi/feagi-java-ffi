@@ -32,6 +32,34 @@ typedef enum FeagiAgentType {
   FEAGI_AGENT_TYPE_INFRASTRUCTURE = 4,
 } FeagiAgentType;
 
+typedef enum FeagiSensoryUnit {
+  FEAGI_SENSORY_UNIT_INFRARED = 0,
+  FEAGI_SENSORY_UNIT_PROXIMITY = 1,
+  FEAGI_SENSORY_UNIT_SHOCK = 2,
+  FEAGI_SENSORY_UNIT_BATTERY = 3,
+  FEAGI_SENSORY_UNIT_SERVO = 4,
+  FEAGI_SENSORY_UNIT_ANALOG_GPIO = 5,
+  FEAGI_SENSORY_UNIT_DIGITAL_GPIO = 6,
+  FEAGI_SENSORY_UNIT_MISC_DATA = 7,
+  FEAGI_SENSORY_UNIT_TEXT_ENGLISH_INPUT = 8,
+  FEAGI_SENSORY_UNIT_COUNT_INPUT = 9,
+  FEAGI_SENSORY_UNIT_VISION = 10,
+  FEAGI_SENSORY_UNIT_SEGMENTED_VISION = 11,
+  FEAGI_SENSORY_UNIT_ACCELEROMETER = 12,
+  FEAGI_SENSORY_UNIT_GYROSCOPE = 13,
+} FeagiSensoryUnit;
+
+typedef enum FeagiMotorUnit {
+  FEAGI_MOTOR_UNIT_ROTARY_MOTOR = 0,
+  FEAGI_MOTOR_UNIT_POSITIONAL_SERVO = 1,
+  FEAGI_MOTOR_UNIT_GAZE = 2,
+  FEAGI_MOTOR_UNIT_MISC_DATA = 3,
+  FEAGI_MOTOR_UNIT_TEXT_ENGLISH_OUTPUT = 4,
+  FEAGI_MOTOR_UNIT_COUNT_OUTPUT = 5,
+  FEAGI_MOTOR_UNIT_OBJECT_SEGMENTATION = 6,
+  FEAGI_MOTOR_UNIT_SIMPLE_VISION_OUTPUT = 7,
+} FeagiMotorUnit;
+
 typedef struct FeagiAgentConfigHandle FeagiAgentConfigHandle;
 typedef struct FeagiAgentClientHandle FeagiAgentClientHandle;
 typedef struct FeagiByteBufferHandle FeagiByteBufferHandle;
@@ -60,6 +88,8 @@ void feagi_config_free(FeagiAgentConfigHandle* cfg);
 FeagiStatus feagi_config_set_registration_endpoint(FeagiAgentConfigHandle* cfg, const char* endpoint);
 FeagiStatus feagi_config_set_sensory_endpoint(FeagiAgentConfigHandle* cfg, const char* endpoint);
 FeagiStatus feagi_config_set_motor_endpoint(FeagiAgentConfigHandle* cfg, const char* endpoint);
+FeagiStatus feagi_config_set_visualization_endpoint(FeagiAgentConfigHandle* cfg, const char* endpoint);
+FeagiStatus feagi_config_set_control_endpoint(FeagiAgentConfigHandle* cfg, const char* endpoint);
 
 FeagiStatus feagi_config_set_feagi_endpoints(
     FeagiAgentConfigHandle* cfg,
@@ -73,6 +103,7 @@ FeagiStatus feagi_config_set_feagi_endpoints(
 FeagiStatus feagi_config_set_heartbeat_interval_s(FeagiAgentConfigHandle* cfg, double heartbeat_interval_s);
 FeagiStatus feagi_config_set_connection_timeout_ms(FeagiAgentConfigHandle* cfg, uint64_t connection_timeout_ms);
 FeagiStatus feagi_config_set_registration_retries(FeagiAgentConfigHandle* cfg, uint32_t registration_retries);
+FeagiStatus feagi_config_set_retry_backoff_ms(FeagiAgentConfigHandle* cfg, uint64_t retry_backoff_ms);
 FeagiStatus feagi_config_set_sensory_socket_config(FeagiAgentConfigHandle* cfg, int32_t send_hwm, int32_t linger_ms, bool immediate);
 
 // Capabilities (must satisfy config validation)
@@ -84,11 +115,39 @@ FeagiStatus feagi_config_set_vision_capability(
     size_t height,
     size_t channels,
     const char* target_cortical_area);
+FeagiStatus feagi_config_set_vision_unit(
+    FeagiAgentConfigHandle* cfg,
+    const char* modality,
+    size_t width,
+    size_t height,
+    size_t channels,
+    FeagiSensoryUnit unit,
+    uint8_t group);
 FeagiStatus feagi_config_set_motor_capability(
     FeagiAgentConfigHandle* cfg,
     const char* modality,
     size_t output_count,
     const char* source_cortical_areas_json);
+FeagiStatus feagi_config_set_motor_unit(
+    FeagiAgentConfigHandle* cfg,
+    const char* modality,
+    size_t output_count,
+    FeagiMotorUnit unit,
+    uint8_t group);
+FeagiStatus feagi_config_set_motor_units_json(
+    FeagiAgentConfigHandle* cfg,
+    const char* modality,
+    size_t output_count,
+    const char* motor_units_json);
+FeagiStatus feagi_config_set_visualization_capability(
+    FeagiAgentConfigHandle* cfg,
+    const char* visualization_type,
+    bool has_resolution,
+    size_t resolution_width,
+    size_t resolution_height,
+    bool has_refresh_rate,
+    double refresh_rate_hz,
+    bool bridge_proxy);
 FeagiStatus feagi_config_set_custom_capability_json(FeagiAgentConfigHandle* cfg, const char* key, const char* json_value);
 
 FeagiStatus feagi_config_validate(const FeagiAgentConfigHandle* cfg);

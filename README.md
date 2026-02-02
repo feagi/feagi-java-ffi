@@ -20,6 +20,8 @@ This folder hosts the **Rust-backed native library** that the future FEAGI Java 
 - **Error reporting**: per-thread last error message via `feagi_last_error_message_alloc()` + `feagi_string_free()`.
 - **Registration response helpers** (JSON): functions to retrieve the last successful registration body, derived ZMQ ports from transport config, and chosen transport.
 - **Motor payload return**: motor data is returned as an opaque byte buffer handle (`FeagiByteBufferHandle`) to keep ownership correct across FFI.
+- **Unit-based capabilities**: vision/motor capability setters support semantic unit + group mappings (Option B contract).
+- **Visualization support**: set visualization endpoint and capability for visualization/infrastructure agents.
 
 ### Build (local)
 From repo root:
