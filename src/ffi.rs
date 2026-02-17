@@ -5,11 +5,19 @@
 // C ABI surface for FEAGI Java SDK (JNI will call into these functions).
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::{c_char, c_uchar, CStr, CString};
 use std::ptr;
+use std::time::{Duration, Instant};
 
-use feagi_agent::core::{AgentClient, AgentConfig, AgentType, RegistrationResponse};
-use feagi_serialization::FeagiByteContainer;
+use feagi_agent::clients::{AgentRegistrationStatus, CommandControlAgent};
+use feagi_agent::{AgentCapabilities, AgentDescriptor, AuthToken};
+use feagi_io::protocol_implementations::websocket::WebSocketUrl;
+use feagi_io::protocol_implementations::zmq::ZmqUrl;
+use feagi_io::traits_and_enums::client::{FeagiClientPusher, FeagiClientSubscriber};
+use feagi_io::traits_and_enums::shared::{FeagiEndpointState, TransportProtocolEndpoint};
+use feagi_io::AgentID;
+use serde::{Deserialize, Serialize};
 
 /// ABI version for `feagi-java-ffi`.
 ///
@@ -80,23 +88,23 @@ pub enum FeagiSensoryUnit {
     Gyroscope = 13,
 }
 
-impl From<FeagiSensoryUnit> for feagi_io::SensoryUnit {
-    fn from(value: FeagiSensoryUnit) -> Self {
-        match value {
-            FeagiSensoryUnit::Infrared => feagi_io::SensoryUnit::Infrared,
-            FeagiSensoryUnit::Proximity => feagi_io::SensoryUnit::Proximity,
-            FeagiSensoryUnit::Shock => feagi_io::SensoryUnit::Shock,
-            FeagiSensoryUnit::Battery => feagi_io::SensoryUnit::Battery,
-            FeagiSensoryUnit::Servo => feagi_io::SensoryUnit::Servo,
-            FeagiSensoryUnit::AnalogGpio => feagi_io::SensoryUnit::AnalogGpio,
-            FeagiSensoryUnit::DigitalGpio => feagi_io::SensoryUnit::DigitalGpio,
-            FeagiSensoryUnit::MiscData => feagi_io::SensoryUnit::MiscData,
-            FeagiSensoryUnit::TextEnglishInput => feagi_io::SensoryUnit::TextEnglishInput,
-            FeagiSensoryUnit::CountInput => feagi_io::SensoryUnit::CountInput,
-            FeagiSensoryUnit::Vision => feagi_io::SensoryUnit::Vision,
-            FeagiSensoryUnit::SegmentedVision => feagi_io::SensoryUnit::SegmentedVision,
-            FeagiSensoryUnit::Accelerometer => feagi_io::SensoryUnit::Accelerometer,
-            FeagiSensoryUnit::Gyroscope => feagi_io::SensoryUnit::Gyroscope,
+impl FeagiSensoryUnit {
+    fn as_contract_str(self) -> &'static str {
+        match self {
+            FeagiSensoryUnit::Infrared => "infrared",
+            FeagiSensoryUnit::Proximity => "proximity",
+            FeagiSensoryUnit::Shock => "shock",
+            FeagiSensoryUnit::Battery => "battery",
+            FeagiSensoryUnit::Servo => "servo",
+            FeagiSensoryUnit::AnalogGpio => "analog_gpio",
+            FeagiSensoryUnit::DigitalGpio => "digital_gpio",
+            FeagiSensoryUnit::MiscData => "misc_data",
+            FeagiSensoryUnit::TextEnglishInput => "text_english_input",
+            FeagiSensoryUnit::CountInput => "count_input",
+            FeagiSensoryUnit::Vision => "vision",
+            FeagiSensoryUnit::SegmentedVision => "segmented_vision",
+            FeagiSensoryUnit::Accelerometer => "accelerometer",
+            FeagiSensoryUnit::Gyroscope => "gyroscope",
         }
     }
 }
@@ -115,19 +123,624 @@ pub enum FeagiMotorUnit {
     SimpleVisionOutput = 7,
 }
 
-impl From<FeagiMotorUnit> for feagi_io::MotorUnit {
-    fn from(value: FeagiMotorUnit) -> Self {
-        match value {
-            FeagiMotorUnit::RotaryMotor => feagi_io::MotorUnit::RotaryMotor,
-            FeagiMotorUnit::PositionalServo => feagi_io::MotorUnit::PositionalServo,
-            FeagiMotorUnit::Gaze => feagi_io::MotorUnit::Gaze,
-            FeagiMotorUnit::MiscData => feagi_io::MotorUnit::MiscData,
-            FeagiMotorUnit::TextEnglishOutput => feagi_io::MotorUnit::TextEnglishOutput,
-            FeagiMotorUnit::CountOutput => feagi_io::MotorUnit::CountOutput,
-            FeagiMotorUnit::ObjectSegmentation => feagi_io::MotorUnit::ObjectSegmentation,
-            FeagiMotorUnit::SimpleVisionOutput => feagi_io::MotorUnit::SimpleVisionOutput,
+impl FeagiMotorUnit {
+    fn as_contract_str(self) -> &'static str {
+        match self {
+            FeagiMotorUnit::RotaryMotor => "rotary_motor",
+            FeagiMotorUnit::PositionalServo => "positional_servo",
+            FeagiMotorUnit::Gaze => "gaze",
+            FeagiMotorUnit::MiscData => "misc_data",
+            FeagiMotorUnit::TextEnglishOutput => "text_english_output",
+            FeagiMotorUnit::CountOutput => "count_output",
+            FeagiMotorUnit::ObjectSegmentation => "object_segmentation",
+            FeagiMotorUnit::SimpleVisionOutput => "simple_vision_output",
         }
     }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum AgentType {
+    Sensory,
+    Motor,
+    Both,
+    Visualization,
+    Infrastructure,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MotorUnitCompat {
+    unit: String,
+    group: u8,
+}
+
+#[derive(Clone, Debug)]
+struct AgentConfig {
+    agent_id: String,
+    agent_type: AgentType,
+    registration_endpoint: String,
+    sensory_endpoint: String,
+    motor_endpoint: String,
+    visualization_endpoint: String,
+    control_endpoint: String,
+    heartbeat_interval_s: Option<f64>,
+    connection_timeout_ms: Option<u64>,
+    registration_retries: Option<u32>,
+    retry_backoff_ms: Option<u64>,
+    sensory_send_hwm: i32,
+    sensory_linger_ms: i32,
+    sensory_immediate: bool,
+    descriptor: Option<AgentDescriptor>,
+    auth_token: Option<AuthToken>,
+    sensory_capability: Option<serde_json::Value>,
+    vision_capability: Option<serde_json::Value>,
+    motor_capability: Option<serde_json::Value>,
+    visualization_capability: Option<serde_json::Value>,
+    custom_capabilities: Vec<(String, serde_json::Value)>,
+}
+
+impl AgentConfig {
+    fn new(agent_id: String, agent_type: AgentType) -> Self {
+        Self {
+            agent_id,
+            agent_type,
+            registration_endpoint: String::new(),
+            sensory_endpoint: String::new(),
+            motor_endpoint: String::new(),
+            visualization_endpoint: String::new(),
+            control_endpoint: String::new(),
+            heartbeat_interval_s: None,
+            connection_timeout_ms: None,
+            registration_retries: None,
+            retry_backoff_ms: None,
+            sensory_send_hwm: 1,
+            sensory_linger_ms: 0,
+            sensory_immediate: true,
+            descriptor: None,
+            auth_token: None,
+            sensory_capability: None,
+            vision_capability: None,
+            motor_capability: None,
+            visualization_capability: None,
+            custom_capabilities: Vec::new(),
+        }
+    }
+
+    fn with_registration_endpoint(mut self, endpoint: String) -> Self {
+        self.registration_endpoint = endpoint;
+        self
+    }
+
+    fn with_sensory_endpoint(mut self, endpoint: String) -> Self {
+        self.sensory_endpoint = endpoint;
+        self
+    }
+
+    fn with_motor_endpoint(mut self, endpoint: String) -> Self {
+        self.motor_endpoint = endpoint;
+        self
+    }
+
+    fn with_visualization_endpoint(mut self, endpoint: String) -> Self {
+        self.visualization_endpoint = endpoint;
+        self
+    }
+
+    fn with_control_endpoint(mut self, endpoint: String) -> Self {
+        self.control_endpoint = endpoint;
+        self
+    }
+
+    fn with_feagi_endpoints(
+        mut self,
+        host: String,
+        registration_port: u16,
+        sensory_port: u16,
+        motor_port: u16,
+        visualization_port: u16,
+        control_port: u16,
+    ) -> Self {
+        self.registration_endpoint = format!("tcp://{}:{}", host, registration_port);
+        self.sensory_endpoint = format!("tcp://{}:{}", host, sensory_port);
+        self.motor_endpoint = format!("tcp://{}:{}", host, motor_port);
+        self.visualization_endpoint = format!("tcp://{}:{}", host, visualization_port);
+        self.control_endpoint = format!("tcp://{}:{}", host, control_port);
+        self
+    }
+
+    fn with_heartbeat_interval(mut self, heartbeat_interval_s: f64) -> Self {
+        self.heartbeat_interval_s = Some(heartbeat_interval_s);
+        self
+    }
+
+    fn with_connection_timeout_ms(mut self, connection_timeout_ms: u64) -> Self {
+        self.connection_timeout_ms = Some(connection_timeout_ms);
+        self
+    }
+
+    fn with_registration_retries(mut self, registration_retries: u32) -> Self {
+        self.registration_retries = Some(registration_retries);
+        self
+    }
+
+    fn with_retry_backoff_ms(mut self, retry_backoff_ms: u64) -> Self {
+        self.retry_backoff_ms = Some(retry_backoff_ms);
+        self
+    }
+
+    fn with_sensory_socket_config(mut self, send_hwm: i32, linger_ms: i32, immediate: bool) -> Self {
+        self.sensory_send_hwm = send_hwm;
+        self.sensory_linger_ms = linger_ms;
+        self.sensory_immediate = immediate;
+        self
+    }
+
+    fn with_sensory_capability(mut self, rate_hz: f64, shm_path: Option<String>) -> Self {
+        self.sensory_capability = Some(serde_json::json!({
+            "rate_hz": rate_hz,
+            "shm_path": shm_path,
+        }));
+        self
+    }
+
+    fn with_vision_capability(
+        mut self,
+        modality: String,
+        dimensions: (usize, usize),
+        channels: usize,
+        target_cortical_area: String,
+    ) -> Self {
+        self.vision_capability = Some(serde_json::json!({
+            "modality": modality,
+            "dimensions": [dimensions.0, dimensions.1],
+            "channels": channels,
+            "target_cortical_area": target_cortical_area,
+        }));
+        self
+    }
+
+    fn with_vision_unit(
+        mut self,
+        modality: String,
+        dimensions: (usize, usize),
+        channels: usize,
+        unit: String,
+        group: u8,
+    ) -> Self {
+        self.vision_capability = Some(serde_json::json!({
+            "modality": modality,
+            "dimensions": [dimensions.0, dimensions.1],
+            "channels": channels,
+            "unit": unit,
+            "group": group,
+        }));
+        self
+    }
+
+    fn with_motor_capability(
+        mut self,
+        modality: String,
+        output_count: usize,
+        source_cortical_areas: Vec<String>,
+    ) -> Self {
+        self.motor_capability = Some(serde_json::json!({
+            "modality": modality,
+            "output_count": output_count,
+            "source_cortical_areas": source_cortical_areas,
+        }));
+        self
+    }
+
+    fn with_motor_unit(
+        mut self,
+        modality: String,
+        output_count: usize,
+        unit: String,
+        group: u8,
+    ) -> Self {
+        self.motor_capability = Some(serde_json::json!({
+            "modality": modality,
+            "output_count": output_count,
+            "source_units": [{"unit": unit, "group": group}],
+        }));
+        self
+    }
+
+    fn with_motor_units(
+        mut self,
+        modality: String,
+        output_count: usize,
+        source_units: Vec<MotorUnitCompat>,
+    ) -> Self {
+        self.motor_capability = Some(serde_json::json!({
+            "modality": modality,
+            "output_count": output_count,
+            "source_units": source_units,
+        }));
+        self
+    }
+
+    fn with_visualization_capability(
+        mut self,
+        visualization_type: String,
+        resolution: Option<(usize, usize)>,
+        refresh_rate_hz: Option<f64>,
+        bridge_proxy: bool,
+    ) -> Self {
+        self.visualization_capability = Some(serde_json::json!({
+            "visualization_type": visualization_type,
+            "resolution": resolution.map(|(w, h)| vec![w, h]),
+            "refresh_rate_hz": refresh_rate_hz,
+            "bridge_proxy": bridge_proxy,
+        }));
+        self
+    }
+
+    fn with_custom_capability(mut self, key: String, value: serde_json::Value) -> Self {
+        self.custom_capabilities.push((key, value));
+        self
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.agent_id.trim().is_empty() {
+            return Err("agent_id must not be empty".to_string());
+        }
+        if self.registration_endpoint.trim().is_empty() {
+            return Err("registration_endpoint must be set".to_string());
+        }
+        if matches!(self.agent_type, AgentType::Sensory | AgentType::Both)
+            && self.sensory_endpoint.trim().is_empty()
+        {
+            return Err("sensory_endpoint must be set for sensory/both".to_string());
+        }
+        if matches!(self.agent_type, AgentType::Motor | AgentType::Both)
+            && self.motor_endpoint.trim().is_empty()
+        {
+            return Err("motor_endpoint must be set for motor/both".to_string());
+        }
+        if self.descriptor.is_none() {
+            return Err("agent descriptor must be set".to_string());
+        }
+        if self.auth_token.is_none() {
+            return Err("auth token must be set".to_string());
+        }
+        if self.connection_timeout_ms.unwrap_or(0) == 0 {
+            return Err("connection_timeout_ms must be set and > 0".to_string());
+        }
+        if self.registration_retries.unwrap_or(0) == 0 {
+            return Err("registration_retries must be set and > 0".to_string());
+        }
+        Ok(())
+    }
+}
+
+struct AgentClient {
+    config: AgentConfig,
+    command_control: Option<CommandControlAgent>,
+    sensory_client: Option<Box<dyn FeagiClientPusher>>,
+    motor_client: Option<Box<dyn FeagiClientSubscriber>>,
+    registration_body_json: Option<serde_json::Value>,
+}
+
+impl AgentClient {
+    fn new(config: AgentConfig) -> Result<Self, String> {
+        config.validate()?;
+        Ok(Self {
+            config,
+            command_control: None,
+            sensory_client: None,
+            motor_client: None,
+            registration_body_json: None,
+        })
+    }
+
+    fn parse_endpoint(endpoint: &str) -> Result<TransportProtocolEndpoint, String> {
+        if endpoint.starts_with("tcp://") {
+            let parsed = ZmqUrl::new(endpoint).map_err(|e| e.to_string())?;
+            Ok(TransportProtocolEndpoint::Zmq(parsed))
+        } else if endpoint.starts_with("ws://") || endpoint.starts_with("wss://") {
+            let parsed = WebSocketUrl::new(endpoint).map_err(|e| e.to_string())?;
+            Ok(TransportProtocolEndpoint::WebSocket(parsed))
+        } else {
+            Err(
+                "Unsupported endpoint scheme; expected tcp://, ws://, or wss://".to_string(),
+            )
+        }
+    }
+
+    fn requested_capabilities(agent_type: AgentType) -> Vec<AgentCapabilities> {
+        match agent_type {
+            AgentType::Sensory => vec![AgentCapabilities::SendSensorData],
+            AgentType::Motor => vec![AgentCapabilities::ReceiveMotorData],
+            AgentType::Both => vec![
+                AgentCapabilities::SendSensorData,
+                AgentCapabilities::ReceiveMotorData,
+            ],
+            AgentType::Visualization => vec![AgentCapabilities::ReceiveNeuronVisualizations],
+            AgentType::Infrastructure => vec![AgentCapabilities::ReceiveSystemMessages],
+        }
+    }
+
+    fn connect(&mut self) -> Result<(), String> {
+        let registration_endpoint = Self::parse_endpoint(&self.config.registration_endpoint)?;
+        let requester_props = registration_endpoint
+            .try_create_boxed_client_requester_properties()
+            .map_err(|e| e.to_string())?;
+        let mut control = CommandControlAgent::new(requester_props);
+        control.request_connect().map_err(|e| e.to_string())?;
+
+        let descriptor = self
+            .config
+            .descriptor
+            .clone()
+            .ok_or_else(|| "agent descriptor must be set".to_string())?;
+        let auth_token = self
+            .config
+            .auth_token
+            .clone()
+            .ok_or_else(|| "auth token must be set".to_string())?;
+        let timeout_ms = self
+            .config
+            .connection_timeout_ms
+            .ok_or_else(|| "connection_timeout_ms must be set".to_string())?;
+        let retries = self
+            .config
+            .registration_retries
+            .ok_or_else(|| "registration_retries must be set".to_string())?;
+        let deadline =
+            Instant::now() + Duration::from_millis(timeout_ms.saturating_mul(retries as u64).max(1));
+        let requested_capabilities = Self::requested_capabilities(self.config.agent_type);
+
+        let mut sent_registration = false;
+        let mut session_id: Option<AgentID> = None;
+        let mut endpoint_map: Option<HashMap<AgentCapabilities, TransportProtocolEndpoint>> = None;
+
+        while Instant::now() < deadline {
+            let (state, _) = control.poll_for_messages().map_err(|e| e.to_string())?;
+            if !sent_registration
+                && matches!(
+                    state,
+                    FeagiEndpointState::ActiveWaiting | FeagiEndpointState::ActiveHasData
+                )
+            {
+                control
+                    .request_registration(
+                        descriptor.clone(),
+                        auth_token.clone(),
+                        requested_capabilities.clone(),
+                    )
+                    .map_err(|e| e.to_string())?;
+                sent_registration = true;
+            }
+            if let AgentRegistrationStatus::Registered(id, endpoints) = control.registration_status() {
+                session_id = Some(*id);
+                endpoint_map = Some(endpoints.clone());
+                break;
+            }
+            std::thread::yield_now();
+        }
+
+        let _session_id = session_id.ok_or_else(|| "registration timed out".to_string())?;
+        let endpoint_map = endpoint_map.ok_or_else(|| "missing endpoint map".to_string())?;
+
+        if matches!(self.config.agent_type, AgentType::Sensory | AgentType::Both) {
+            let sensory_endpoint = endpoint_map
+                .get(&AgentCapabilities::SendSensorData)
+                .ok_or_else(|| "missing sensory endpoint from registration".to_string())?;
+            let props = sensory_endpoint
+                .try_create_boxed_client_pusher_properties()
+                .map_err(|e| e.to_string())?;
+            let mut pusher = props.as_boxed_client_pusher();
+            pusher.request_connect().map_err(|e| e.to_string())?;
+            self.sensory_client = Some(pusher);
+        }
+
+        if matches!(self.config.agent_type, AgentType::Motor | AgentType::Both) {
+            let motor_endpoint = endpoint_map
+                .get(&AgentCapabilities::ReceiveMotorData)
+                .ok_or_else(|| "missing motor endpoint from registration".to_string())?;
+            let props = motor_endpoint
+                .try_create_boxed_client_subscriber_properties()
+                .map_err(|e| e.to_string())?;
+            let mut subscriber = props.as_boxed_client_subscriber();
+            subscriber.request_connect().map_err(|e| e.to_string())?;
+            self.motor_client = Some(subscriber);
+        }
+
+        self.registration_body_json = Some(build_registration_json(&endpoint_map));
+        self.command_control = Some(control);
+        Ok(())
+    }
+
+    fn registration_body_json(&self) -> Option<&serde_json::Value> {
+        self.registration_body_json.as_ref()
+    }
+
+    fn send_sensory_bytes(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        let sensory_client = self
+            .sensory_client
+            .as_mut()
+            .ok_or_else(|| "sensory channel is not available".to_string())?;
+        match sensory_client.poll() {
+            FeagiEndpointState::ActiveWaiting => {}
+            FeagiEndpointState::ActiveHasData => {
+                return Err("sensory endpoint is in ActiveHasData state".to_string());
+            }
+            FeagiEndpointState::Pending => return Err("sensory endpoint is pending".to_string()),
+            FeagiEndpointState::Inactive => return Err("sensory endpoint is inactive".to_string()),
+            FeagiEndpointState::Errored(err) => {
+                return Err(format!("sensory endpoint errored: {}", err));
+            }
+        }
+        sensory_client.publish_data(&bytes).map_err(|e| e.to_string())
+    }
+
+    fn try_send_sensory_bytes(&mut self, bytes: &[u8]) -> Result<bool, String> {
+        let sensory_client = self
+            .sensory_client
+            .as_mut()
+            .ok_or_else(|| "sensory channel is not available".to_string())?;
+        match sensory_client.poll() {
+            FeagiEndpointState::ActiveWaiting => {
+                sensory_client.publish_data(bytes).map_err(|e| e.to_string())?;
+                Ok(true)
+            }
+            FeagiEndpointState::Pending
+            | FeagiEndpointState::Inactive
+            | FeagiEndpointState::ActiveHasData => Ok(false),
+            FeagiEndpointState::Errored(err) => Err(format!("sensory endpoint errored: {}", err)),
+        }
+    }
+
+    fn receive_motor_data(&mut self) -> Result<Option<Vec<u8>>, String> {
+        let motor_client = self
+            .motor_client
+            .as_mut()
+            .ok_or_else(|| "motor channel is not available".to_string())?;
+        match motor_client.poll() {
+            FeagiEndpointState::ActiveHasData => motor_client
+                .consume_retrieved_data()
+                .map(|v| Some(v.to_vec()))
+                .map_err(|e| e.to_string()),
+            FeagiEndpointState::ActiveWaiting
+            | FeagiEndpointState::Pending
+            | FeagiEndpointState::Inactive => Ok(None),
+            FeagiEndpointState::Errored(err) => Err(format!("motor endpoint errored: {}", err)),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RegistrationResponse {
+    recommended_transport: Option<String>,
+    transports: HashMap<String, TransportConfig>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct TransportConfig {
+    ports: HashMap<String, u16>,
+}
+
+impl RegistrationResponse {
+    fn from_json(body: &serde_json::Value) -> Result<Self, String> {
+        let recommended_transport = body
+            .get("recommended_transport")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string);
+
+        let transports_obj = body
+            .get("transports")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| "registration body missing transports".to_string())?;
+        let mut transports = HashMap::new();
+        for (name, value) in transports_obj {
+            let ports_obj = value
+                .get("ports")
+                .and_then(|v| v.as_object())
+                .ok_or_else(|| format!("transport '{}' missing ports object", name))?;
+            let mut ports = HashMap::new();
+            for (port_name, port_value) in ports_obj {
+                let Some(port_u64) = port_value.as_u64() else {
+                    return Err(format!("transport '{}.{}' port is not an integer", name, port_name));
+                };
+                if port_u64 > u16::MAX as u64 {
+                    return Err(format!("transport '{}.{}' port out of range", name, port_name));
+                }
+                ports.insert(port_name.clone(), port_u64 as u16);
+            }
+            transports.insert(name.clone(), TransportConfig { ports });
+        }
+
+        Ok(Self {
+            recommended_transport,
+            transports,
+        })
+    }
+
+    fn get_transport(&self, name: &str) -> Option<&TransportConfig> {
+        self.transports.get(name)
+    }
+
+    fn choose_transport(&self, preference: Option<&str>) -> Option<serde_json::Value> {
+        if let Some(pref) = preference {
+            if let Some(cfg) = self.transports.get(pref) {
+                return Some(serde_json::json!({
+                    "name": pref,
+                    "ports": cfg.ports,
+                }));
+            }
+        }
+        let recommended = self.recommended_transport.as_deref()?;
+        self.transports.get(recommended).map(|cfg| {
+            serde_json::json!({
+                "name": recommended,
+                "ports": cfg.ports,
+            })
+        })
+    }
+}
+
+fn parse_endpoint_port(endpoint: &TransportProtocolEndpoint) -> Option<u16> {
+    let text = match endpoint {
+        TransportProtocolEndpoint::Zmq(url) => url.as_str(),
+        TransportProtocolEndpoint::WebSocket(url) => url.as_str(),
+    };
+    let port_str = text.rsplit(':').next()?;
+    port_str.parse::<u16>().ok()
+}
+
+fn build_registration_json(
+    endpoint_map: &HashMap<AgentCapabilities, TransportProtocolEndpoint>,
+) -> serde_json::Value {
+    let mut transports: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    let mut zmq_ports: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+    let mut ws_ports: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+
+    for (capability, endpoint) in endpoint_map {
+        let key = match capability {
+            AgentCapabilities::SendSensorData => "sensory",
+            AgentCapabilities::ReceiveMotorData => "motor",
+            AgentCapabilities::ReceiveNeuronVisualizations => "visualization",
+            AgentCapabilities::ReceiveSystemMessages => "control",
+        };
+        if let Some(port) = parse_endpoint_port(endpoint) {
+            match endpoint {
+                TransportProtocolEndpoint::Zmq(_) => {
+                    zmq_ports.insert(key.to_string(), serde_json::json!(port));
+                }
+                TransportProtocolEndpoint::WebSocket(_) => {
+                    ws_ports.insert(key.to_string(), serde_json::json!(port));
+                }
+            }
+        }
+    }
+
+    if !zmq_ports.is_empty() {
+        transports.insert(
+            "zmq".to_string(),
+            serde_json::json!({
+                "ports": serde_json::Value::Object(zmq_ports),
+            }),
+        );
+    }
+    if !ws_ports.is_empty() {
+        transports.insert(
+            "websocket".to_string(),
+            serde_json::json!({
+                "ports": serde_json::Value::Object(ws_ports),
+            }),
+        );
+    }
+
+    let recommended_transport = if transports.contains_key("websocket") {
+        "websocket"
+    } else {
+        "zmq"
+    };
+
+    serde_json::json!({
+        "recommended_transport": recommended_transport,
+        "transports": serde_json::Value::Object(transports),
+    })
 }
 
 /// Opaque config handle (caller owns it).
@@ -507,6 +1120,64 @@ pub extern "C" fn feagi_config_set_registration_retries(
 }
 
 #[no_mangle]
+pub extern "C" fn feagi_config_set_agent_descriptor(
+    cfg: *mut FeagiAgentConfigHandle,
+    manufacturer: *const c_char,
+    agent_name: *const c_char,
+    agent_version: u32,
+) -> FeagiStatus {
+    clear_last_error();
+    if cfg.is_null() {
+        set_last_error("cfg must not be null");
+        return FeagiStatus::NullPointer;
+    }
+    let Ok(manufacturer) = cstr_to_string(manufacturer, "manufacturer") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    let Ok(agent_name) = cstr_to_string(agent_name, "agent_name") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    if agent_version == 0 {
+        set_last_error("agent_version must be > 0");
+        return FeagiStatus::InvalidArgument;
+    }
+    let descriptor = match AgentDescriptor::new(&manufacturer, &agent_name, agent_version) {
+        Ok(v) => v,
+        Err(e) => {
+            set_last_error(e.to_string());
+            return FeagiStatus::InvalidArgument;
+        }
+    };
+    unsafe {
+        (*cfg).config.descriptor = Some(descriptor);
+    }
+    FeagiStatus::Ok
+}
+
+#[no_mangle]
+pub extern "C" fn feagi_config_set_auth_token_base64(
+    cfg: *mut FeagiAgentConfigHandle,
+    auth_token_b64: *const c_char,
+) -> FeagiStatus {
+    clear_last_error();
+    if cfg.is_null() {
+        set_last_error("cfg must not be null");
+        return FeagiStatus::NullPointer;
+    }
+    let Ok(auth_token_b64) = cstr_to_string(auth_token_b64, "auth_token_b64") else {
+        return FeagiStatus::InvalidUtf8;
+    };
+    let Some(auth_token) = AuthToken::from_base64(&auth_token_b64) else {
+        set_last_error("auth_token_b64 must decode to exactly 32 bytes");
+        return FeagiStatus::InvalidArgument;
+    };
+    unsafe {
+        (*cfg).config.auth_token = Some(auth_token);
+    }
+    FeagiStatus::Ok
+}
+
+#[no_mangle]
 pub extern "C" fn feagi_config_set_retry_backoff_ms(
     cfg: *mut FeagiAgentConfigHandle,
     retry_backoff_ms: u64,
@@ -645,7 +1316,13 @@ pub extern "C" fn feagi_config_set_vision_unit(
         (*cfg).config = (*cfg)
             .config
             .clone()
-            .with_vision_unit(modality, (width, height), channels, unit.into(), group);
+            .with_vision_unit(
+                modality,
+                (width, height),
+                channels,
+                unit.as_contract_str().to_string(),
+                group,
+            );
     }
     FeagiStatus::Ok
 }
@@ -732,7 +1409,12 @@ pub extern "C" fn feagi_config_set_motor_unit(
         (*cfg).config = (*cfg)
             .config
             .clone()
-            .with_motor_unit(modality, output_count, unit.into(), group);
+            .with_motor_unit(
+                modality,
+                output_count,
+                unit.as_contract_str().to_string(),
+                group,
+            );
     }
     FeagiStatus::Ok
 }
@@ -762,7 +1444,7 @@ pub extern "C" fn feagi_config_set_motor_units_json(
     let Ok(json_str) = cstr_to_string(motor_units_json, "motor_units_json") else {
         return FeagiStatus::InvalidUtf8;
     };
-    let units: Vec<feagi_io::MotorUnitSpec> = match serde_json::from_str(&json_str) {
+    let units: Vec<MotorUnitCompat> = match serde_json::from_str(&json_str) {
         Ok(v) => v,
         Err(e) => {
             set_last_error(format!("motor_units_json parse failed: {e}"));
@@ -842,6 +1524,9 @@ mod tests {
         let registration = CString::new("tcp://feagi.invalid:30001").unwrap();
         let visualization = CString::new("tcp://feagi.invalid:5562").unwrap();
         let viz_type = CString::new("3d_brain").unwrap();
+        let manufacturer = CString::new("neuraville").unwrap();
+        let agent_name = CString::new("java_viz").unwrap();
+        let auth_b64 = CString::new("BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=").unwrap();
 
         let cfg = feagi_config_new(agent_id.as_ptr(), FeagiAgentType::Visualization);
         assert!(!cfg.is_null());
@@ -852,6 +1537,22 @@ mod tests {
         );
         assert_eq!(
             feagi_config_set_visualization_endpoint(cfg, visualization.as_ptr()),
+            FeagiStatus::Ok
+        );
+        assert_eq!(
+            feagi_config_set_connection_timeout_ms(cfg, 1000),
+            FeagiStatus::Ok
+        );
+        assert_eq!(
+            feagi_config_set_registration_retries(cfg, 3),
+            FeagiStatus::Ok
+        );
+        assert_eq!(
+            feagi_config_set_agent_descriptor(cfg, manufacturer.as_ptr(), agent_name.as_ptr(), 1),
+            FeagiStatus::Ok
+        );
+        assert_eq!(
+            feagi_config_set_auth_token_base64(cfg, auth_b64.as_ptr()),
             FeagiStatus::Ok
         );
         assert_eq!(
@@ -1129,7 +1830,7 @@ pub extern "C" fn feagi_client_registration_chosen_transport_json_alloc(
         return ptr::null_mut();
     };
 
-    let json = match serde_json::to_string(chosen) {
+    let json = match serde_json::to_string(&chosen) {
         Ok(s) => s,
         Err(e) => {
             set_last_error(format!("Failed to serialize chosen transport: {e}"));
@@ -1292,20 +1993,13 @@ pub extern "C" fn feagi_client_receive_motor_buffer(
         }
     };
 
-    let Some(motor_data) = maybe else {
+    let Some(buffer) = maybe else {
         unsafe {
             *out_has_data = false;
             *out_buf = ptr::null_mut();
         }
         return FeagiStatus::Ok;
     };
-
-    let mut container = FeagiByteContainer::new_empty();
-    if let Err(e) = container.overwrite_byte_data_with_single_struct_data(&motor_data, 0) {
-        set_last_error(format!("Failed to serialize motor data to container: {e:?}"));
-        return FeagiStatus::SdkError;
-    }
-    let buffer = container.get_byte_ref().to_vec();
 
     if buffer.is_empty() {
         unsafe {

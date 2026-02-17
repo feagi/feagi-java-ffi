@@ -103,6 +103,12 @@ FeagiStatus feagi_config_set_feagi_endpoints(
 FeagiStatus feagi_config_set_heartbeat_interval_s(FeagiAgentConfigHandle* cfg, double heartbeat_interval_s);
 FeagiStatus feagi_config_set_connection_timeout_ms(FeagiAgentConfigHandle* cfg, uint64_t connection_timeout_ms);
 FeagiStatus feagi_config_set_registration_retries(FeagiAgentConfigHandle* cfg, uint32_t registration_retries);
+FeagiStatus feagi_config_set_agent_descriptor(
+    FeagiAgentConfigHandle* cfg,
+    const char* manufacturer,
+    const char* agent_name,
+    uint32_t agent_version);
+FeagiStatus feagi_config_set_auth_token_base64(FeagiAgentConfigHandle* cfg, const char* auth_token_b64);
 FeagiStatus feagi_config_set_retry_backoff_ms(FeagiAgentConfigHandle* cfg, uint64_t retry_backoff_ms);
 FeagiStatus feagi_config_set_sensory_socket_config(FeagiAgentConfigHandle* cfg, int32_t send_hwm, int32_t linger_ms, bool immediate);
 
