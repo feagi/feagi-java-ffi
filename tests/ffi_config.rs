@@ -68,9 +68,8 @@ fn test_config_set_motor_units_json() {
     let manufacturer = cstr("neuraville");
     let agent_name = cstr("java_motor");
     let auth_b64 = cstr("BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=");
-    let motor_units_json = cstr(
-        r#"[{"unit":"rotary_motor","group":0},{"unit":"positional_servo","group":1}]"#,
-    );
+    let motor_units_json =
+        cstr(r#"[{"unit":"rotary_motor","group":0},{"unit":"positional_servo","group":1}]"#);
 
     let cfg = feagi_config_new(agent_id.as_ptr(), FeagiAgentType::Motor);
     assert!(!cfg.is_null());

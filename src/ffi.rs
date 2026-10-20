@@ -150,7 +150,7 @@ enum AgentType {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct MotorUnitCompat {
     unit: String,
-    group: u8,
+    group: u16,
 }
 
 #[derive(Clone, Debug)]
@@ -267,7 +267,12 @@ impl AgentConfig {
         self
     }
 
-    fn with_sensory_socket_config(mut self, send_hwm: i32, linger_ms: i32, immediate: bool) -> Self {
+    fn with_sensory_socket_config(
+        mut self,
+        send_hwm: i32,
+        linger_ms: i32,
+        immediate: bool,
+    ) -> Self {
         self.sensory_send_hwm = send_hwm;
         self.sensory_linger_ms = linger_ms;
         self.sensory_immediate = immediate;
@@ -304,7 +309,7 @@ impl AgentConfig {
         dimensions: (usize, usize),
         channels: usize,
         unit: String,
-        group: u8,
+        group: u16,
     ) -> Self {
         self.vision_capability = Some(serde_json::json!({
             "modality": modality,
@@ -335,7 +340,7 @@ impl AgentConfig {
         modality: String,
         output_count: usize,
         unit: String,
-        group: u8,
+        group: u16,
     ) -> Self {
         self.motor_capability = Some(serde_json::json!({
             "modality": modality,
@@ -441,9 +446,7 @@ impl AgentClient {
             let parsed = WebSocketUrl::new(endpoint).map_err(|e| e.to_string())?;
             Ok(TransportProtocolEndpoint::WebSocket(parsed))
         } else {
-            Err(
-                "Unsupported endpoint scheme; expected tcp://, ws://, or wss://".to_string(),
-            )
+            Err("Unsupported endpoint scheme; expected tcp://, ws://, or wss://".to_string())
         }
     }
 
@@ -486,8 +489,8 @@ impl AgentClient {
             .config
             .registration_retries
             .ok_or_else(|| "registration_retries must be set".to_string())?;
-        let deadline =
-            Instant::now() + Duration::from_millis(timeout_ms.saturating_mul(retries as u64).max(1));
+        let deadline = Instant::now()
+            + Duration::from_millis(timeout_ms.saturating_mul(retries as u64).max(1));
         let requested_capabilities = Self::requested_capabilities(self.config.agent_type);
 
         let mut sent_registration = false;
@@ -511,7 +514,9 @@ impl AgentClient {
                     .map_err(|e| e.to_string())?;
                 sent_registration = true;
             }
-            if let AgentRegistrationStatus::Registered(id, endpoints) = control.registration_status() {
+            if let AgentRegistrationStatus::Registered(id, endpoints) =
+                control.registration_status()
+            {
                 session_id = Some(*id);
                 endpoint_map = Some(endpoints.clone());
                 break;
@@ -571,7 +576,9 @@ impl AgentClient {
                 return Err(format!("sensory endpoint errored: {}", err));
             }
         }
-        sensory_client.publish_data(&bytes).map_err(|e| e.to_string())
+        sensory_client
+            .publish_data(&bytes)
+            .map_err(|e| e.to_string())
     }
 
     fn try_send_sensory_bytes(&mut self, bytes: &[u8]) -> Result<bool, String> {
@@ -581,7 +588,9 @@ impl AgentClient {
             .ok_or_else(|| "sensory channel is not available".to_string())?;
         match sensory_client.poll() {
             FeagiEndpointState::ActiveWaiting => {
-                sensory_client.publish_data(bytes).map_err(|e| e.to_string())?;
+                sensory_client
+                    .publish_data(bytes)
+                    .map_err(|e| e.to_string())?;
                 Ok(true)
             }
             FeagiEndpointState::Pending
@@ -640,10 +649,16 @@ impl RegistrationResponse {
             let mut ports = HashMap::new();
             for (port_name, port_value) in ports_obj {
                 let Some(port_u64) = port_value.as_u64() else {
-                    return Err(format!("transport '{}.{}' port is not an integer", name, port_name));
+                    return Err(format!(
+                        "transport '{}.{}' port is not an integer",
+                        name, port_name
+                    ));
                 };
                 if port_u64 > u16::MAX as u64 {
-                    return Err(format!("transport '{}.{}' port out of range", name, port_name));
+                    return Err(format!(
+                        "transport '{}.{}' port out of range",
+                        name, port_name
+                    ));
                 }
                 ports.insert(port_name.clone(), port_u64 as u16);
             }
@@ -919,10 +934,7 @@ pub extern "C" fn feagi_config_set_registration_endpoint(
         return FeagiStatus::InvalidUtf8;
     };
     unsafe {
-        (*cfg).config = (*cfg)
-            .config
-            .clone()
-            .with_registration_endpoint(endpoint);
+        (*cfg).config = (*cfg).config.clone().with_registration_endpoint(endpoint);
     }
     FeagiStatus::Ok
 }
@@ -979,10 +991,7 @@ pub extern "C" fn feagi_config_set_visualization_endpoint(
         return FeagiStatus::InvalidUtf8;
     };
     unsafe {
-        (*cfg).config = (*cfg)
-            .config
-            .clone()
-            .with_visualization_endpoint(endpoint);
+        (*cfg).config = (*cfg).config.clone().with_visualization_endpoint(endpoint);
     }
     FeagiStatus::Ok
 }
@@ -1192,7 +1201,10 @@ pub extern "C" fn feagi_config_set_retry_backoff_ms(
         return FeagiStatus::InvalidArgument;
     }
     unsafe {
-        (*cfg).config = (*cfg).config.clone().with_retry_backoff_ms(retry_backoff_ms);
+        (*cfg).config = (*cfg)
+            .config
+            .clone()
+            .with_retry_backoff_ms(retry_backoff_ms);
     }
     FeagiStatus::Ok
 }
@@ -1281,10 +1293,12 @@ pub extern "C" fn feagi_config_set_vision_capability(
         return FeagiStatus::InvalidUtf8;
     };
     unsafe {
-        (*cfg).config = (*cfg)
-            .config
-            .clone()
-            .with_vision_capability(modality, (width, height), channels, target);
+        (*cfg).config = (*cfg).config.clone().with_vision_capability(
+            modality,
+            (width, height),
+            channels,
+            target,
+        );
     }
     FeagiStatus::Ok
 }
@@ -1298,7 +1312,7 @@ pub extern "C" fn feagi_config_set_vision_unit(
     height: usize,
     channels: usize,
     unit: FeagiSensoryUnit,
-    group: u8,
+    group: u16,
 ) -> FeagiStatus {
     clear_last_error();
     if cfg.is_null() {
@@ -1313,16 +1327,13 @@ pub extern "C" fn feagi_config_set_vision_unit(
         return FeagiStatus::InvalidUtf8;
     };
     unsafe {
-        (*cfg).config = (*cfg)
-            .config
-            .clone()
-            .with_vision_unit(
-                modality,
-                (width, height),
-                channels,
-                unit.as_contract_str().to_string(),
-                group,
-            );
+        (*cfg).config = (*cfg).config.clone().with_vision_unit(
+            modality,
+            (width, height),
+            channels,
+            unit.as_contract_str().to_string(),
+            group,
+        );
     }
     FeagiStatus::Ok
 }
@@ -1376,10 +1387,11 @@ pub extern "C" fn feagi_config_set_motor_capability(
     }
 
     unsafe {
-        (*cfg).config = (*cfg)
-            .config
-            .clone()
-            .with_motor_capability(modality, output_count, cortical_areas);
+        (*cfg).config =
+            (*cfg)
+                .config
+                .clone()
+                .with_motor_capability(modality, output_count, cortical_areas);
     }
     FeagiStatus::Ok
 }
@@ -1391,7 +1403,7 @@ pub extern "C" fn feagi_config_set_motor_unit(
     modality: *const c_char,
     output_count: usize,
     unit: FeagiMotorUnit,
-    group: u8,
+    group: u16,
 ) -> FeagiStatus {
     clear_last_error();
     if cfg.is_null() {
@@ -1406,15 +1418,12 @@ pub extern "C" fn feagi_config_set_motor_unit(
         return FeagiStatus::InvalidUtf8;
     };
     unsafe {
-        (*cfg).config = (*cfg)
-            .config
-            .clone()
-            .with_motor_unit(
-                modality,
-                output_count,
-                unit.as_contract_str().to_string(),
-                group,
-            );
+        (*cfg).config = (*cfg).config.clone().with_motor_unit(
+            modality,
+            output_count,
+            unit.as_contract_str().to_string(),
+            group,
+        );
     }
     FeagiStatus::Ok
 }
@@ -1718,7 +1727,9 @@ pub extern "C" fn feagi_client_registration_response_json_alloc(
     match CString::new(json) {
         Ok(s) => s.into_raw(),
         Err(e) => {
-            set_last_error(format!("Failed to allocate registration response string: {e}"));
+            set_last_error(format!(
+                "Failed to allocate registration response string: {e}"
+            ));
             ptr::null_mut()
         }
     }
@@ -1841,9 +1852,7 @@ pub extern "C" fn feagi_client_registration_chosen_transport_json_alloc(
     match CString::new(json) {
         Ok(s) => s.into_raw(),
         Err(e) => {
-            set_last_error(format!(
-                "Failed to allocate chosen transport string: {e}"
-            ));
+            set_last_error(format!("Failed to allocate chosen transport string: {e}"));
             ptr::null_mut()
         }
     }
@@ -2020,4 +2029,3 @@ pub extern "C" fn feagi_client_receive_motor_buffer(
     }
     FeagiStatus::Ok
 }
-

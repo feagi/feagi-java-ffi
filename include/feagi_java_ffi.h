@@ -128,7 +128,7 @@ FeagiStatus feagi_config_set_vision_unit(
     size_t height,
     size_t channels,
     FeagiSensoryUnit unit,
-    uint8_t group);
+    uint16_t group);
 FeagiStatus feagi_config_set_motor_capability(
     FeagiAgentConfigHandle* cfg,
     const char* modality,
@@ -139,7 +139,7 @@ FeagiStatus feagi_config_set_motor_unit(
     const char* modality,
     size_t output_count,
     FeagiMotorUnit unit,
-    uint8_t group);
+    uint16_t group);
 FeagiStatus feagi_config_set_motor_units_json(
     FeagiAgentConfigHandle* cfg,
     const char* modality,
